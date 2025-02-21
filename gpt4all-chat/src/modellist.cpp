@@ -9,9 +9,11 @@
 
 #include <QChar>
 #include <QCoreApplication>
+#include <QCryptographicHash>
 #include <QDebug>
 #include <QDir>
 #include <QDirIterator>
+#include <QEvent>
 #include <QEventLoop>
 #include <QFile>
 #include <QFileInfo>
@@ -29,14 +31,15 @@
 #include <QSslConfiguration>
 #include <QSslSocket>
 #include <QStandardPaths>
-#include <QStringList>
+#include <QStringList> // IWYU pragma: keep
 #include <QTextStream>
 #include <QTimer>
 #include <QUrl>
+#include <QtAssert>
 #include <QtLogging>
+#include <QtPreprocessorSupport>
 
 #include <algorithm>
-#include <cstddef>
 #include <iterator>
 #include <optional>
 #include <string>
@@ -1621,7 +1624,6 @@ void ModelList::parseModelsJsonFile(const QByteArray &jsonData, bool save)
         QString requiresVersion = obj["requires"].toString();
         QString versionRemoved = obj["removedIn"].toString();
         QString url = obj["url"].toString();
-        QByteArray modelHash = obj["md5sum"].toString().toLatin1();
         bool isDefault = obj.contains("isDefault") && obj["isDefault"] == u"true"_s;
         bool disableGUI = obj.contains("disableGUI") && obj["disableGUI"] == u"true"_s;
         QString description = obj["description"].toString();
@@ -1631,6 +1633,16 @@ void ModelList::parseModelsJsonFile(const QByteArray &jsonData, bool save)
         QString quant = obj["quant"].toString();
         QString type = obj["type"].toString();
         bool isEmbeddingModel = obj["embeddingModel"].toBool();
+
+        QByteArray modelHash;
+        ModelInfo::HashAlgorithm hashAlgorithm;
+        if (auto it = obj.find("sha256sum"_L1); it != obj.end()) {
+            modelHash = it->toString().toLatin1();
+            hashAlgorithm = ModelInfo::Sha256;
+        } else {
+            modelHash = obj["md5sum"].toString().toLatin1();
+            hashAlgorithm = ModelInfo::Md5;
+        }
 
         // Some models aren't supported in the GUI at all
         if (disableGUI)
@@ -1660,7 +1672,7 @@ void ModelList::parseModelsJsonFile(const QByteArray &jsonData, bool save)
             { ModelList::FilenameRole, modelFilename },
             { ModelList::FilesizeRole, modelFilesize },
             { ModelList::HashRole, modelHash },
-            { ModelList::HashAlgorithmRole, ModelInfo::Md5 },
+            { ModelList::HashAlgorithmRole, hashAlgorithm },
             { ModelList::DefaultRole, isDefault },
             { ModelList::DescriptionRole, description },
             { ModelList::RequiresVersionRole, requiresVersion },

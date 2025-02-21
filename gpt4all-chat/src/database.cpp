@@ -1,19 +1,21 @@
 #include "database.h"
 
 #include "mysettings.h"
-#include "utils.h"
+#include "utils.h" // IWYU pragma: keep
 
 #include <duckx/duckx.hpp>
 #include <fmt/format.h>
+#include <usearch/index.hpp>
 #include <usearch/index_plugins.hpp>
 
-#include <QByteArrayView>
 #include <QDebug>
 #include <QDir>
 #include <QDirIterator>
 #include <QFile>
 #include <QFileSystemWatcher>
+#include <QFlags>
 #include <QIODevice>
+#include <QKeyValueIterator>
 #include <QRegularExpression>
 #include <QSqlError>
 #include <QSqlQuery>
@@ -22,8 +24,9 @@
 #include <QMap>
 #include <QUtf8StringView>
 #include <QVariant>
-#include <Qt>
 #include <QtLogging>
+#include <QtMinMax>
+#include <QtTypes>
 
 #include <algorithm>
 #include <cmath>
@@ -45,6 +48,7 @@ namespace us = unum::usearch;
 
 //#define DEBUG
 //#define DEBUG_EXAMPLE
+
 
 namespace {
 
@@ -1111,9 +1115,9 @@ class DocumentReader {
 public:
     struct Metadata { QString title, author, subject, keywords; };
 
-    static std::unique_ptr<DocumentReader> fromDocument(const DocumentInfo &info);
+    static std::unique_ptr<DocumentReader> fromDocument(DocumentInfo info);
 
-    const DocumentInfo           &doc     () const { return *m_info; }
+    const DocumentInfo           &doc     () const { return m_info; }
     const Metadata               &metadata() const { return m_metadata; }
     const std::optional<QString> &word    () const { return m_word; }
     const std::optional<QString> &nextWord()       { m_word = advance(); return m_word; }
@@ -1123,8 +1127,8 @@ public:
     virtual ~DocumentReader() = default;
 
 protected:
-    explicit DocumentReader(const DocumentInfo &info)
-        : m_info(&info) {}
+    explicit DocumentReader(DocumentInfo info)
+        : m_info(std::move(info)) {}
 
     void postInit(Metadata &&metadata = {})
     {
@@ -1134,9 +1138,9 @@ protected:
 
     virtual std::optional<QString> advance() = 0;
 
-    const DocumentInfo     *m_info;
-    Metadata                m_metadata;
-    std::optional<QString>  m_word;
+    DocumentInfo           m_info;
+    Metadata               m_metadata;
+    std::optional<QString> m_word;
 };
 
 namespace {
@@ -1144,8 +1148,8 @@ namespace {
 #ifdef GPT4ALL_USE_QTPDF
 class PdfDocumentReader final : public DocumentReader {
 public:
-    explicit PdfDocumentReader(const DocumentInfo &info)
-        : DocumentReader(info)
+    explicit PdfDocumentReader(DocumentInfo info)
+        : DocumentReader(std::move(info))
     {
         QString path = info.file.canonicalFilePath();
         if (m_doc.load(path) != QPdfDocument::Error::None)
@@ -1185,8 +1189,8 @@ private:
 #else
 class PdfDocumentReader final : public DocumentReader {
 public:
-    explicit PdfDocumentReader(const DocumentInfo &info)
-        : DocumentReader(info)
+    explicit PdfDocumentReader(DocumentInfo info)
+        : DocumentReader(std::move(info))
     {
         QString path = info.file.canonicalFilePath();
         m_doc = FPDF_LoadDocument(path.toUtf8().constData(), nullptr);
@@ -1209,7 +1213,6 @@ public:
             FPDF_ClosePage(m_page);
         if (m_doc)
             FPDF_CloseDocument(m_doc);
-        FPDF_DestroyLibrary();
     }
 
     int page() const override { return m_currentPage; }
@@ -1224,7 +1227,7 @@ private:
                     return std::nullopt;
 
                 if (m_page)
-                    FPDF_ClosePage(m_page);
+                    FPDF_ClosePage(std::exchange(m_page, nullptr));
                 m_page = FPDF_LoadPage(m_doc, m_currentPage++);
                 if (!m_page)
                     throw std::runtime_error("Failed to load page.");
@@ -1278,8 +1281,8 @@ private:
 
 class WordDocumentReader final : public DocumentReader {
 public:
-    explicit WordDocumentReader(const DocumentInfo &info)
-        : DocumentReader(info)
+    explicit WordDocumentReader(DocumentInfo info)
+        : DocumentReader(std::move(info))
         , m_doc(info.file.canonicalFilePath().toStdString())
     {
         m_doc.open();
@@ -1371,8 +1374,8 @@ protected:
 
 class TxtDocumentReader final : public DocumentReader {
 public:
-    explicit TxtDocumentReader(const DocumentInfo &info)
-        : DocumentReader(info)
+    explicit TxtDocumentReader(DocumentInfo info)
+        : DocumentReader(std::move(info))
         , m_file(info.file.canonicalFilePath())
     {
         if (!m_file.open(QIODevice::ReadOnly))
@@ -1413,13 +1416,13 @@ protected:
 
 } // namespace
 
-std::unique_ptr<DocumentReader> DocumentReader::fromDocument(const DocumentInfo &doc)
+std::unique_ptr<DocumentReader> DocumentReader::fromDocument(DocumentInfo doc)
 {
     if (doc.isPdf())
-        return std::make_unique<PdfDocumentReader>(doc);
+        return std::make_unique<PdfDocumentReader>(std::move(doc));
     if (doc.isDocx())
-        return std::make_unique<WordDocumentReader>(doc);
-    return std::make_unique<TxtDocumentReader>(doc);
+        return std::make_unique<WordDocumentReader>(std::move(doc));
+    return std::make_unique<TxtDocumentReader>(std::move(doc));
 }
 
 ChunkStreamer::ChunkStreamer(Database *database)
@@ -1427,12 +1430,12 @@ ChunkStreamer::ChunkStreamer(Database *database)
 
 ChunkStreamer::~ChunkStreamer() = default;
 
-void ChunkStreamer::setDocument(const DocumentInfo &doc, int documentId, const QString &embeddingModel)
+void ChunkStreamer::setDocument(DocumentInfo doc, int documentId, const QString &embeddingModel)
 {
     auto docKey = doc.key();
     if (!m_docKey || *m_docKey != docKey) {
         m_docKey         = docKey;
-        m_reader         = DocumentReader::fromDocument(doc);
+        m_reader         = DocumentReader::fromDocument(std::move(doc));
         m_documentId     = documentId;
         m_embeddingModel = embeddingModel;
         m_chunk.clear();
@@ -1442,7 +1445,8 @@ void ChunkStreamer::setDocument(const DocumentInfo &doc, int documentId, const Q
         if (m_database->m_documentIdCache.contains(documentId)) {
             QSqlQuery q(m_database->m_db);
             if (!m_database->removeChunksByDocumentId(q, documentId))
-                handleDocumentError("ERROR: Cannot remove chunks of document", documentId, doc.file.canonicalPath(), q.lastError());
+                handleDocumentError("ERROR: Cannot remove chunks of document",
+                                    documentId, m_reader->doc().file.canonicalPath(), q.lastError());
         }
     }
 }
