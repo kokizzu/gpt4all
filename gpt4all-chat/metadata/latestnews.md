@@ -1,17 +1,15 @@
 ## Latest News
 
-GPT4All v3.7.0 was released on January 23rd. Changes include:
+GPT4All v3.10.0 was released on February 24th. Changes include:
 
-* **Windows ARM Support:** GPT4All now supports the Windows ARM platform, ensuring compatibility with devices powered by Qualcomm Snapdragon and Microsoft SQ-series processors.
-  * **NOTE:** Support for GPU and/or NPU acceleration is not available at this time. Only the CPU will be used to run LLMs.
-  * **NOTE:** You must install the new *Windows ARM* version of GPT4All from the website. The standard *Windows* version will not work due to emulation limitations.
-* **Fixed Updating on macOS:** The maintenance tool no longer crashes when attempting to update or uninstall GPT4All on Sequoia.
-  * **NOTE:** If you have installed the version from the GitHub releases as a workaround for this issue, you can safely uninstall it and switch back to the version from the website.
-* **Fixed Chat Saving on macOS:** Chats now save as expected when the application is quit with Command-Q.
-* **Code Interpreter Improvements:**
-  * The behavior when the code takes too long to execute and times out has been improved.
-  * console.log now accepts multiple arguments for better compatibility with native JavaScript.
-* **Chat Templating Improvements:**
-  * Two crashes and one compatibility issue have been fixed in the chat template parser.
-  * The default chat template for EM German Mistral has been fixed.
-  * Automatic replacements have been added for five new models as we continue to improve compatibility with common chat templates.
+* **Remote Models:**
+  * The Add Model page now has a dedicated tab for remote model providers.
+  * Groq, OpenAI, and Mistral remote models are now easier to configure.
+* **CUDA Compatibility:** GPUs with CUDA compute capability 5.0 such as the GTX 750 are now supported by the CUDA backend.
+* **New Model:** The non-MoE Granite model is now supported.
+* **Translation Updates:**
+  * The Italian translation has been updated.
+  * The Simplified Chinese translation has been significantly improved.
+* **Better Chat Templates:** The default chat templates for OLMoE 7B 0924/0125 and Granite 3.1 3B/8B have been improved.
+* **Whitespace Fixes:** DeepSeek-R1-based models now have better whitespace behavior in their output.
+* **Crash Fixes:** Several issues that could potentially cause GPT4All to crash have been fixed.
